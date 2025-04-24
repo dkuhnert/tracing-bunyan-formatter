@@ -47,6 +47,7 @@ impl Default for JsonStorage<'_> {
 }
 
 /// Taken verbatim from tracing-subscriber
+#[allow(unexpected_cfgs)]
 impl Visit for JsonStorage<'_> {
     /// Visit a signed 64-bit integer value.
     fn record_i64(&mut self, field: &Field, value: i64) {
