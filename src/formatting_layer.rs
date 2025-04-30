@@ -2,6 +2,7 @@ use crate::storage_layer::JsonStorage;
 use ahash::{HashSet, HashSetExt};
 use serde::ser::{Serialize, SerializeMap, Serializer};
 use serde_json::Value;
+use std::borrow::Cow;
 use std::collections::HashMap;
 use std::fmt;
 use std::io::Write;
@@ -222,6 +223,7 @@ impl<W: for<'a> MakeWriter<'a> + 'static> BunyanFormattingLayer<W> {
         &self,
         span: &SpanRef<S>,
         ty: Type,
+        attrs: Option<&Attributes>,
     ) -> Result<Vec<u8>, std::io::Error> {
         let mut buffer = Vec::new();
         let mut serializer = serde_json::Serializer::new(&mut buffer);
@@ -270,8 +272,18 @@ impl<W: for<'a> MakeWriter<'a> + 'static> BunyanFormattingLayer<W> {
             }
         }
 
+        // Add fields from extension or attrs if extension is not used
         let extensions = span.extensions();
-        if let Some(visitor) = extensions.get::<JsonStorage>() {
+        let visitor = if let Some(visitor) = extensions.get::<JsonStorage>() {
+            Some(Cow::Borrowed(visitor))
+        } else if let Some(attrs) = attrs {
+            let mut visitor = JsonStorage::default();
+            attrs.values().record(&mut visitor);
+            Some(Cow::Owned(visitor))
+        } else {
+            None
+        };
+        if let Some(visitor) = visitor {
             for (key, value) in visitor.values() {
                 // Make sure this key isn't reserved. If it is reserved,
                 // silently ignore
@@ -461,16 +473,16 @@ where
         }
     }
 
-    fn on_new_span(&self, _attrs: &Attributes, id: &Id, ctx: Context<'_, S>) {
+    fn on_new_span(&self, attrs: &Attributes, id: &Id, ctx: Context<'_, S>) {
         let span = ctx.span(id).expect("Span not found, this is a bug");
-        if let Ok(serialized) = self.serialize_span(&span, Type::EnterSpan) {
+        if let Ok(serialized) = self.serialize_span(&span, Type::EnterSpan, Some(attrs)) {
             let _ = self.emit(&serialized, span.metadata());
         }
     }
 
     fn on_close(&self, id: Id, ctx: Context<'_, S>) {
         let span = ctx.span(&id).expect("Span not found, this is a bug");
-        if let Ok(serialized) = self.serialize_span(&span, Type::ExitSpan) {
+        if let Ok(serialized) = self.serialize_span(&span, Type::ExitSpan, None) {
             let _ = self.emit(&serialized, span.metadata());
         }
     }
